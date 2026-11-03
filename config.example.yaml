@@ -1,0 +1,39 @@
+# Copy to config.yaml. scripts/setup.sh does this once.
+# Paths below are relative to this file's directory. Run the app from the repo root.
+
+camera:
+  # Device index (0) or path. Use the USB camera that already works in VLC.
+  # Many webcams expose two nodes; if the picture is empty, try /dev/video1.
+  device: /dev/video0
+  width: 1280
+  height: 720
+  # USB cameras are usually faster with MJPEG. Set to "" to leave the default.
+  fourcc: MJPG
+
+model:
+  # First run downloads YOLO11n (.pt) and exports this ONNX file. CPU inference.
+  weights: models/yolo11n.onnx
+  source_weights: models/yolo11n.pt
+  confidence: 0.40
+  iou: 0.50
+  imgsz: 640
+
+# COCO names only. A double-decker bus is counted as bus in this MVP.
+classes:
+  - car
+  - truck
+  - bus
+
+tracker:
+  # Match a box to a live track of the same class when overlap reaches this IoU.
+  iou_threshold: 0.30
+  # Forget a track after this many frames with no match.
+  max_age: 15
+
+log:
+  path: logs/events.jsonl
+  summary_interval: 60
+
+preview:
+  enabled: true
+  window: ubun-cam

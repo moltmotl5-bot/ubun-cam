@@ -1,0 +1,19 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.netlify
+
+# Local config and runtime output
+config.yaml
+logs/
+models/
+runs/
+*.pt
+*.onnx
+*.engine
+.env
