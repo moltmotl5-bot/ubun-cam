@@ -1,0 +1,28 @@
+# User unit. Paths assume the clone is ~/ubun-cam. Edit them if it lives elsewhere.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/ubuncam.service ~/.config/systemd/user/ubuncam.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ubuncam.service
+#   journalctl --user -u ubuncam -f
+#
+# For a preview window, uncomment the display lines and set preview.enabled: true.
+# For a logger that keeps running after logout: sudo loginctl enable-linger "$USER"
+# Headless logging is the safer service mode: set preview.enabled: false in config.yaml.
+
+[Unit]
+Description=ubun-cam USB webcam vehicle detection
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ubun-cam
+ExecStart=%h/ubun-cam/.venv/bin/python -m ubuncam --config %h/ubun-cam/config.yaml
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+# Environment=DISPLAY=:0
+# Environment=XAUTHORITY=%h/.Xauthority
+
+[Install]
+WantedBy=default.target

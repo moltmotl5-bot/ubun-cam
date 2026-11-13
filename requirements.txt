@@ -1,0 +1,11 @@
+# CPU wheels. The i7 target has no NVIDIA GPU; the default PyPI torch build pulls CUDA libraries.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+ultralytics==8.4.199
+opencv-python==4.14.0.94
+PyYAML==6.0.3
+onnx==1.23.2
+onnxruntime==1.31.1
+onnxslim==0.1.98
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu

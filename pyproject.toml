@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ubuncam"
+version = "0.1.0"
+description = "Local USB webcam detection of cars, trucks, and buses."
+requires-python = ">=3.11"
+# torch / torchvision are intentionally absent here. requirements.txt pins the
+# CPU builds from the PyTorch CPU index, and scripts/setup.sh installs that
+# file before `pip install -e . --no-deps`.
+dependencies = [
+    "ultralytics==8.4.199",
+    "opencv-python==4.14.0.94",
+    "PyYAML==6.0.3",
+    "onnx==1.23.2",
+    "onnxruntime==1.31.1",
+    "onnxslim==0.1.98",
+]
+
+[project.scripts]
+ubuncam = "ubuncam.__main__:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
