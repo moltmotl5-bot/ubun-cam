@@ -45,4 +45,6 @@ echo
 echo "Start from the repo root:"
 echo "  source .venv/bin/activate"
 echo "  python -m ubuncam"
-echo "Press q in the preview window to quit."
+echo "Dashboard (this machine only): http://127.0.0.1:8765/"
+echo "Bus images: logs/captures/   Events: logs/events.jsonl"
+echo "Press q in the preview window to quit. Ctrl+C also stops."
