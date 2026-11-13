@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 ALLOWED_CLASSES = ("car", "truck", "bus")
+DASHBOARD_HOST = "127.0.0.1"
 
 
 class ConfigError(ValueError):
@@ -33,6 +34,10 @@ class Config:
     summary_interval_s: float
     preview: bool
     window: str
+    captures_dir: Path
+    dashboard_enabled: bool
+    dashboard_host: str
+    dashboard_port: int
 
 
 def load_config(path: str | Path, use_env: bool = True) -> Config:
@@ -55,6 +60,8 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
     tracker = _section(raw, "tracker")
     log = _section(raw, "log")
     preview = _section(raw, "preview")
+    dashboard = _section(raw, "dashboard")
+    captures = _section(raw, "captures")
 
     device = str(camera.get("device", "/dev/video0"))
     classes = _classes(raw.get("classes", list(ALLOWED_CLASSES)))
@@ -81,6 +88,13 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
     weights = _resolve(base, str(model.get("weights", "models/yolo11n.onnx")))
     source = _resolve(base, str(model.get("source_weights", "models/yolo11n.pt")))
     window = str(preview.get("window", "ubun-cam"))
+    if "host" in dashboard or "bind" in dashboard:
+        raise ConfigError(
+            "dashboard listens on 127.0.0.1 only. Remove dashboard.host and dashboard.bind."
+        )
+    dashboard_enabled = _flag(dashboard.get("enabled", True), "dashboard.enabled")
+    dashboard_port = _port(dashboard.get("port", 8765))
+    captures_dir = _resolve(base, str(captures.get("dir", "logs/captures")))
 
     if use_env:
         if os.environ.get("UBUNCAM_CAMERA"):
@@ -114,7 +128,30 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
         summary_interval_s=summary,
         preview=preview_enabled,
         window=window,
+        captures_dir=captures_dir,
+        dashboard_enabled=dashboard_enabled,
+        dashboard_host=DASHBOARD_HOST,
+        dashboard_port=dashboard_port,
     )
+
+
+def _flag(value: object, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    raise ConfigError(f"{label} must be true or false")
+
+
+def _port(value: object) -> int:
+    port = _positive_int(value, "dashboard.port")
+    if port > 65535:
+        raise ConfigError("dashboard.port must be from 1 to 65535")
+    return port
 
 
 def _section(raw: dict, name: str) -> dict:
