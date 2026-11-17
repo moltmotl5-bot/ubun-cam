@@ -186,6 +186,63 @@ def annotate(
     return vis
 
 
+def bus_capture_filename(track_id: int, when: datetime | None = None) -> str:
+    """``bus-<id>-YYYYmmddTHHMMSSffffffZ.jpg``. The dashboard only serves this shape."""
+    moment = when or datetime.now(timezone.utc)
+    return f"bus-{int(track_id)}-{moment.strftime('%Y%m%dT%H%M%S%fZ')}.jpg"
+
+
+def save_bus_captures(frame: np.ndarray, events: list[dict], directory: Path) -> list[Path]:
+    """Write one annotated JPEG per new bus detection event.
+
+    Sets ``capture`` on those events to the absolute path. Other classes are
+    left unchanged. Pass only the events from one ``VehicleCounter.observe``
+    call so each track is saved once.
+    """
+    bus_events = [
+        event
+        for event in events
+        if event.get("class") == "bus" and event.get("event", "detection") == "detection"
+    ]
+    saved: list[Path] = []
+    if not bus_events:
+        return saved
+    directory.mkdir(parents=True, exist_ok=True)
+    for event in bus_events:
+        path = directory / bus_capture_filename(int(event["track_id"]))
+        if not cv2.imwrite(str(path), frame):
+            continue
+        event["capture"] = str(path.resolve())
+        saved.append(path.resolve())
+    return saved
+
+
+def record_frame(
+    frame: np.ndarray,
+    detections: list[Detection],
+    tracker: IoUTracker,
+    counter: VehicleCounter,
+    captures_dir: Path,
+    *,
+    draw: bool = False,
+    fps: float | None = None,
+) -> tuple[list[Detection], list[dict], dict[str, int], np.ndarray | None]:
+    """Track, count, and save one annotated JPEG per new bus track.
+
+    ``draw`` forces an annotated frame for the preview or the dashboard.
+    A new bus still produces that frame when ``draw`` is false, so headless
+    mode keeps the captures.
+    """
+    tracked = tracker.update(detections)
+    events = counter.observe(tracked)
+    active = active_counts(tracked, tuple(counter.counts))
+    needs_image = draw or any(event.get("class") == "bus" for event in events)
+    vis = annotate(frame, tracked, counter.counts, fps=fps) if needs_image else None
+    if vis is not None:
+        save_bus_captures(vis, events, captures_dir)
+    return tracked, events, active, vis
+
+
 def _label(image: np.ndarray, text: str, origin: tuple[int, int], color: tuple[int, int, int]) -> None:
     font = cv2.FONT_HERSHEY_SIMPLEX
     scale = 0.5
@@ -279,3 +336,97 @@ def self_check_log(directory: Path) -> int:
     assert summary["counts"]["truck"] == 1
     assert "ts" in detection
     return len(lines)
+
+
+def self_check_bus_captures(directory: Path) -> dict:
+    """Save one annotated JPEG per new bus track, and record the path in JSONL.
+
+    No camera and no weights. Headless (``draw=False``) still saves. Drawing
+    every frame does not save the same track again.
+    """
+    from ubuncam.dashboard import CAPTURE_NAME
+
+    tracker = IoUTracker(iou_threshold=0.3, max_age=1)
+    counter = VehicleCounter(("car", "truck", "bus"))
+    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    captures = directory / "captures"
+    log = EventLog(directory / "events.jsonl")
+
+    _tracked, events, _active, vis = record_frame(
+        frame,
+        [Detection((10, 10, 80, 70), "bus", 0.91)],
+        tracker,
+        counter,
+        captures,
+        draw=False,
+    )
+    assert vis is not None
+    assert int(vis[:28].sum()) > 0
+    assert counter.counts == {"car": 0, "truck": 0, "bus": 1}
+    assert len(events) == 1 and events[0]["class"] == "bus"
+    saved = Path(events[0]["capture"])
+    assert saved.is_file()
+    assert CAPTURE_NAME.match(saved.name)
+    decoded = cv2.imdecode(np.frombuffer(saved.read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None and decoded.shape == frame.shape
+    assert int(decoded.sum()) > 0
+    log.write_events(events)
+
+    _tracked, events, _active, vis = record_frame(
+        frame,
+        [Detection((12, 12, 82, 72), "bus", 0.90)],
+        tracker,
+        counter,
+        captures,
+        draw=True,
+    )
+    assert events == []
+    assert vis is not None
+    assert counter.counts["bus"] == 1
+    assert len(list(captures.glob("bus-*.jpg"))) == 1
+    log.write_events(events)
+
+    _tracked, events, _active, _vis = record_frame(
+        frame,
+        [
+            Detection((14, 14, 84, 74), "bus", 0.89),
+            Detection((180, 10, 260, 50), "car", 0.70),
+        ],
+        tracker,
+        counter,
+        captures,
+        draw=False,
+    )
+    assert [event["class"] for event in events] == ["car"]
+    assert "capture" not in events[0]
+    assert len(list(captures.glob("bus-*.jpg"))) == 1
+    log.write_events(events)
+
+    _tracked, events, _active, _vis = record_frame(
+        frame,
+        [
+            Detection((14, 14, 84, 74), "bus", 0.89),
+            Detection((180, 80, 300, 160), "bus", 0.82),
+        ],
+        tracker,
+        counter,
+        captures,
+        draw=False,
+    )
+    assert [event["class"] for event in events] == ["bus"]
+    second = Path(events[0]["capture"])
+    assert second.is_file() and second != saved
+    assert len(list(captures.glob("bus-*.jpg"))) == 2
+    log.write_events(events)
+
+    lines = (directory / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    first = json.loads(lines[0])
+    car = json.loads(lines[1])
+    again = json.loads(lines[2])
+    assert first["event"] == "detection" and first["class"] == "bus"
+    assert first["capture"] == str(saved)
+    assert car["class"] == "car" and "capture" not in car
+    assert again["class"] == "bus" and again["capture"] == str(second)
+    assert counter.counts == {"car": 1, "truck": 0, "bus": 2}
+    return {"saved": 2, "files": 2, "counts": dict(counter.counts), "logged_capture": True}

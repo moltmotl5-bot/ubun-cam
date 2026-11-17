@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ubuncam"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local USB webcam detection of cars, trucks, and buses."
 requires-python = ">=3.11"
 # torch / torchvision are intentionally absent here. requirements.txt pins the

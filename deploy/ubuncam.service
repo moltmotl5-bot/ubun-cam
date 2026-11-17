@@ -9,6 +9,7 @@
 # For a preview window, uncomment the display lines and set preview.enabled: true.
 # For a logger that keeps running after logout: sudo loginctl enable-linger "$USER"
 # Headless logging is the safer service mode: set preview.enabled: false in config.yaml.
+# The dashboard stays on this machine at http://127.0.0.1:8765/ when dashboard.enabled is true.
 
 [Unit]
 Description=ubun-cam USB webcam vehicle detection
