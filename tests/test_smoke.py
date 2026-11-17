@@ -11,9 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ubuncam.config import ConfigError, load_config  # noqa: E402
+from ubuncam.config import ConfigError, apply_thread_limits, load_config  # noqa: E402
 from ubuncam.dashboard import self_check_dashboard, self_check_hourly  # noqa: E402
-from ubuncam.pipeline import self_check, self_check_bus_captures, self_check_log  # noqa: E402
+from ubuncam.pipeline import self_check, self_check_bus_captures, self_check_inference_gate, self_check_log  # noqa: E402
 
 
 class SmokeTest(unittest.TestCase):
@@ -33,12 +33,140 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(cfg.camera_device, "/dev/video0")
         self.assertEqual(cfg.classes, ("car", "truck", "bus"))
         self.assertAlmostEqual(cfg.confidence, 0.40)
+        self.assertEqual(cfg.imgsz, 320)
+        self.assertAlmostEqual(cfg.infer_fps, 5.0)
+        self.assertEqual(cfg.threads, 4)
         self.assertTrue(str(cfg.log_path).endswith("logs/events.jsonl"))
         self.assertTrue(str(cfg.weights).endswith("models/yolo11n.onnx"))
         self.assertTrue(cfg.dashboard_enabled)
         self.assertEqual(cfg.dashboard_host, "127.0.0.1")
         self.assertEqual(cfg.dashboard_port, 8765)
         self.assertTrue(str(cfg.captures_dir).endswith("logs/captures"))
+
+    def test_infer_defaults_and_limits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text("camera: {device: /dev/video1}\n", encoding="utf-8")
+            cfg = load_config(path, use_env=False)
+            self.assertEqual(cfg.imgsz, 320)
+            self.assertAlmostEqual(cfg.infer_fps, 5.0)
+            self.assertEqual(cfg.threads, 4)
+
+            path.write_text("model: {infer_fps: 2.5, threads: 1, imgsz: 640}\n", encoding="utf-8")
+            cfg = load_config(path, use_env=False)
+            self.assertEqual(cfg.imgsz, 640)
+            self.assertAlmostEqual(cfg.infer_fps, 2.5)
+            self.assertEqual(cfg.threads, 1)
+
+            for text in (
+                "model: {infer_fps: 0}\n",
+                "model: {infer_fps: -1}\n",
+                "model: {infer_fps: true}\n",
+                "model: {threads: 0}\n",
+                "model: {threads: 1.5}\n",
+            ):
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaises(ConfigError):
+                    load_config(path, use_env=False)
+
+    def test_thread_limits_env(self):
+        keys = (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "NUMEXPR_MAX_THREADS",
+            "OPENCV_FOR_THREADS_NUM",
+            "ORT_INTRA_OP_NUM_THREADS",
+            "ORT_INTER_OP_NUM_THREADS",
+            "OMP_WAIT_POLICY",
+        )
+        import cv2
+
+        previous = {key: os.environ.get(key) for key in keys}
+        previous_threads = cv2.getNumThreads()
+        try:
+            apply_thread_limits(4)
+            self.assertEqual(os.environ["OMP_NUM_THREADS"], "4")
+            self.assertEqual(os.environ["ORT_INTRA_OP_NUM_THREADS"], "4")
+            self.assertEqual(os.environ["ORT_INTER_OP_NUM_THREADS"], "1")
+            self.assertEqual(os.environ["OPENCV_FOR_THREADS_NUM"], "4")
+            self.assertEqual(os.environ["OMP_WAIT_POLICY"], "PASSIVE")
+            self.assertEqual(cv2.getNumThreads(), 4)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            cv2.setNumThreads(previous_threads)
+
+    def test_tracker_updates_only_on_inference(self):
+        result = self_check_inference_gate()
+        self.assertEqual(result["counts"], {"car": 2, "truck": 0, "bus": 0})
+        self.assertEqual(result["overlays"], 4)
+        self.assertEqual(result["inferences"], 5)
+        self.assertTrue(result["held_track"])
+
+    def test_infer_worker_one_inflight_and_schedule(self):
+        import threading
+        import time
+
+        import numpy as np
+
+        from ubuncam.__main__ import _InferWorker, next_infer_at
+
+        self.assertEqual(next_infer_at(10.0, 0.0, True, 0.2), 10.2)
+        self.assertEqual(next_infer_at(10.5, 10.2, False, 0.2), 10.2)
+        self.assertEqual(next_infer_at(10.5, 10.2, True, 0.2), 10.7)
+
+        class Gate:
+            def __init__(self):
+                self.calls = 0
+                self.entered = threading.Event()
+                self.block = threading.Event()
+                self.seen: list[int] = []
+
+            def detect(self, frame):
+                self.calls += 1
+                self.seen.append(int(frame[0, 0, 0]))
+                self.entered.set()
+                if not self.block.wait(2):
+                    raise TimeoutError("inference was not released")
+                return []
+
+        gate = Gate()
+        worker = _InferWorker(gate)
+        first = np.zeros((2, 2, 3), dtype=np.uint8)
+        second = np.zeros((2, 2, 3), dtype=np.uint8)
+        second[0, 0, 0] = 7
+        try:
+            self.assertTrue(worker.submit(first))
+            self.assertTrue(gate.entered.wait(2))
+            first[0, 0, 0] = 9
+            self.assertFalse(worker.submit(second))
+            self.assertIsNone(worker.poll())
+            gate.block.set()
+            result = None
+            deadline = time.time() + 2
+            while result is None and time.time() < deadline:
+                result = worker.poll()
+                time.sleep(0.005)
+            self.assertIsNotNone(result)
+            detections, frame, elapsed = result
+            self.assertEqual(detections, [])
+            self.assertEqual(gate.seen, [0])
+            self.assertEqual(int(frame[0, 0, 0]), 0)
+            self.assertGreaterEqual(elapsed, 0.0)
+            self.assertEqual(gate.calls, 1)
+            gate.entered.clear()
+            self.assertTrue(worker.submit(second))
+            self.assertTrue(gate.entered.wait(2))
+            self.assertEqual(gate.calls, 2)
+            self.assertEqual(gate.seen[-1], 7)
+        finally:
+            gate.block.set()
+            worker.close()
 
     def test_rejects_custom_class(self):
         with tempfile.TemporaryDirectory() as tmp:

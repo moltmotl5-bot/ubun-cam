@@ -29,14 +29,29 @@ def ensure_onnx(source_weights: Path, onnx_path: Path, imgsz: int) -> Path:
 
 
 class Detector:
-    def __init__(self, weights: Path, classes: tuple[str, ...], confidence: float, iou: float, imgsz: int):
+    def __init__(
+        self,
+        weights: Path,
+        classes: tuple[str, ...],
+        confidence: float,
+        iou: float,
+        imgsz: int,
+        threads: int = 4,
+    ):
+        from ubuncam.config import apply_thread_limits
+
+        apply_thread_limits(threads)
         from ultralytics import YOLO
 
         self.classes = classes
         self.confidence = confidence
         self.iou = iou
         self.imgsz = imgsz
+        self.threads = threads
         self.model = YOLO(str(weights), task="detect")
+        # select_device raises the torch pool to the CPU count. Put it back.
+        # The ONNX session already read ORT_INTRA_OP_NUM_THREADS at creation.
+        apply_thread_limits(threads)
         names = getattr(self.model, "names", None) or {}
         if not names:
             names = {2: "car", 5: "bus", 7: "truck"}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +12,9 @@ import yaml
 
 ALLOWED_CLASSES = ("car", "truck", "bus")
 DASHBOARD_HOST = "127.0.0.1"
+DEFAULT_IMGSZ = 320
+DEFAULT_INFER_FPS = 5.0
+DEFAULT_THREADS = 4
 
 
 class ConfigError(ValueError):
@@ -27,6 +32,8 @@ class Config:
     confidence: float
     iou: float
     imgsz: int
+    infer_fps: float
+    threads: int
     classes: tuple[str, ...]
     tracker_iou: float
     tracker_max_age: int
@@ -69,7 +76,9 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
     iou = _unit_float(model.get("iou", 0.50), "model.iou")
     tracker_iou = _unit_float(tracker.get("iou_threshold", 0.30), "tracker.iou_threshold")
     max_age = _positive_int(tracker.get("max_age", 15), "tracker.max_age")
-    imgsz = _positive_int(model.get("imgsz", 640), "model.imgsz")
+    imgsz = _positive_int(model.get("imgsz", DEFAULT_IMGSZ), "model.imgsz")
+    infer_fps = _positive_number(model.get("infer_fps", DEFAULT_INFER_FPS), "model.infer_fps")
+    threads = _positive_int(model.get("threads", DEFAULT_THREADS), "model.threads")
     width = _non_negative_int(camera.get("width", 1280), "camera.width")
     height = _non_negative_int(camera.get("height", 720), "camera.height")
     try:
@@ -121,6 +130,8 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
         confidence=confidence,
         iou=iou,
         imgsz=imgsz,
+        infer_fps=infer_fps,
+        threads=threads,
         classes=classes,
         tracker_iou=tracker_iou,
         tracker_max_age=max_age,
@@ -133,6 +144,41 @@ def load_config(path: str | Path, use_env: bool = True) -> Config:
         dashboard_host=DASHBOARD_HOST,
         dashboard_port=dashboard_port,
     )
+
+
+def apply_thread_limits(threads: int) -> None:
+    """Cap OpenCV, OpenMP, and ONNX Runtime before those pools start.
+
+    Call this before importing cv2, torch, or ultralytics. ONNX Runtime reads
+    ``ORT_INTRA_OP_NUM_THREADS`` when the session is created, and OpenMP reads
+    ``OMP_NUM_THREADS`` when its runtime starts. OpenCV also honors
+    ``cv2.setNumThreads`` if it is already imported.
+    """
+    count = _positive_int(threads, "model.threads")
+    value = str(count)
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "NUMEXPR_MAX_THREADS",
+        "OPENCV_FOR_THREADS_NUM",
+        "ORT_INTRA_OP_NUM_THREADS",
+    ):
+        os.environ[key] = value
+    # One graph at a time. Inter-op workers would sit on top of the intra-op pool.
+    os.environ["ORT_INTER_OP_NUM_THREADS"] = "1"
+    # Idle OpenMP threads otherwise spin between inferences and peg the CPU.
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+    cv2 = sys.modules.get("cv2")
+    if cv2 is not None:
+        cv2.setNumThreads(count)
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        try:
+            torch.set_num_threads(count)
+        except RuntimeError:
+            pass
 
 
 def _flag(value: object, label: str) -> bool:
@@ -191,6 +237,18 @@ def _unit_float(value: object, label: str) -> float:
         raise ConfigError(f"{label} must be a number from 0 to 1") from exc
     if not 0.0 <= number <= 1.0:
         raise ConfigError(f"{label} must be a number from 0 to 1")
+    return number
+
+
+def _positive_number(value: object, label: str) -> float:
+    if isinstance(value, bool):
+        raise ConfigError(f"{label} must be a number > 0")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{label} must be a number > 0") from exc
+    if not math.isfinite(number) or number <= 0.0:
+        raise ConfigError(f"{label} must be a number > 0")
     return number
 
 

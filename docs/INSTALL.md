@@ -187,6 +187,6 @@ To show a window from the user service, set `preview.enabled: true` and uncommen
 | `No DISPLAY or WAYLAND_DISPLAY` | You are on a text console. Export `DISPLAY` or set `preview.enabled: false`. Logging, bus captures, and the dashboard still run. |
 | Dashboard page does not load | Open it on this machine at `http://127.0.0.1:<dashboard.port>/`. The process does not listen on other interfaces. If the port is taken, the log says so and detection continues. |
 | Preview backend error | Install the GTK / libgl packages in section 1, then retry. The loop drops the window and keeps logging. |
-| Very low fps | Keep `imgsz: 640` and the `n` model. MJPEG capture avoids a slow YUYV conversion. OpenVINO is not wired up. |
+| Very low fps or the CPU stays high | The live view should follow the camera. YOLO defaults are `imgsz: 320`, `infer_fps: 5`, and `threads: 4`. Raise `imgsz` or `infer_fps` for accuracy or more frequent counts, or lower `threads` if the CPU is still pegged. An existing `config.yaml` keeps an old `imgsz: 640` until you edit it. MJPEG capture avoids a slow YUYV conversion. OpenVINO is not wired up. |
 | Setup fails downloading weights | Check network and run `python -m ubuncam --export-model` again. The `.pt` file lands in `models/`. |
 | `unsupported classes` | Only `car`, `truck`, and `bus`. Double-decker is not its own class yet. |

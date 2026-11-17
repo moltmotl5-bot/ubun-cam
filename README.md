@@ -34,7 +34,9 @@ Target machine this was written for: x86 Intel i7-8700, 32 GB RAM, Ubuntu 26.04.
                      /captures  bus images
 ```
 
-A new track id is one count. The same vehicle stays one count while its box still overlaps the previous box. If it leaves the frame long enough for the track to expire, the next sighting is a new count.
+The preview window and the dashboard show the newest camera frame with the last boxes drawn on it. YOLO runs on one background thread, at most `model.infer_fps` times a second, and the tracker moves only when that result arrives.
+
+A new track id is one count. The same vehicle stays one count while its box still overlaps the previous box. If it leaves the frame long enough for the track to expire (`tracker.max_age` inference updates), the next sighting is a new count.
 
 Each new track appends one `detection` line. A bus line also records the JPEG path. Every `log.summary_interval` seconds, and again on exit, a `summary` line records the totals.
 
@@ -113,6 +115,9 @@ Run these from the repo root so `config.yaml` and `models/` resolve.
 | `camera.width` / `height` | Requested capture size |
 | `camera.fourcc` | `MJPG` is a good USB default. `""` leaves the camera alone |
 | `model.confidence` | Detection threshold |
+| `model.imgsz` | Inference size. Default 320. 640 is more accurate but heavier on this CPU |
+| `model.infer_fps` | Max YOLO rate. Default 5. The live view stays at the camera rate and keeps the last boxes |
+| `model.threads` | OpenCV, OpenMP, and ONNX Runtime threads. Default 4 |
 | `model.weights` | ONNX path. Exported if missing |
 | `classes` | Any non-empty subset of `car`, `truck`, `bus` |
 | `log.path` | JSONL event log |
@@ -139,7 +144,7 @@ An optional user unit lives in `deploy/ubuncam.service`. It assumes the repo is 
 
 ## Hardware notes
 
-- CPU only. YOLO11n at 640 is the small model, which is the point of the `n` variant on an i7-8700.
+- CPU only. The live view runs at the camera rate. YOLO11n runs in the background at `model.infer_fps` (default 5) and `model.imgsz` (default 320). `model.threads` (default 4) caps OpenCV, OpenMP, and ONNX Runtime and leaves a couple of cores free on a 6-core i7. 640 is more accurate and heavier. A `config.yaml` copied earlier keeps its own `imgsz` until you change that line.
 - ONNX Runtime (via Ultralytics) is the runtime. OpenVINO is a possible later speed-up on this Intel CPU and is not installed here.
 - 32 GB RAM is plenty. The heavy part is the first CPU PyTorch download, not the steady-state process.
 - The webcam must already appear as a V4L2 device. This app does not open VLC.
