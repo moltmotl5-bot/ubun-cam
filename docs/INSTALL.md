@@ -104,7 +104,7 @@ python -m ubuncam --self-check
 python -m unittest tests.test_smoke -v
 ```
 
-`--self-check` and the unit tests also cover two camera-free cases: one annotated JPEG per new bus track, and the dashboard counts payload on `127.0.0.1`.
+`--self-check` and the unit tests also cover camera-free cases: one annotated JPEG per new bus track, today's hourly buckets from the JSONL log, the dashboard counts payload, and the captures page on `127.0.0.1`.
 
 ## 5. Dashboard and bus captures
 
@@ -114,15 +114,21 @@ With the service running, open this URL in a browser on the same machine:
 http://127.0.0.1:8765/
 ```
 
-The page uses the same session totals as the tracker. It also shows how many cars, trucks, and buses are in the current frame, a live view of the annotated frames, and the newest bus images. The process binds to `127.0.0.1` only. Config keys are `dashboard.enabled`, `dashboard.port`, and `captures.dir` (see `config.example.yaml`).
+The main page uses the same session totals as the tracker. It also shows how many cars, trucks, and buses are in the current frame, a live view of the annotated frames, and a chart of **today by local hour** (00–23). The four lines are total (car + truck + bus), car, truck, and bus. The chart counts `detection` events in `logs/events.jsonl` whose timestamp falls on today's local date, so a restart does not clear it. The page updates the chart without a reload. The process binds to `127.0.0.1` only. Config keys are `dashboard.enabled`, `dashboard.port`, and `captures.dir` (see `config.example.yaml`).
+
+Bus images are not on the main page. Open:
+
+```text
+http://127.0.0.1:8765/captures
+```
 
 Each new bus track saves one annotated JPEG (boxes and labels) under `logs/captures/`. The matching `detection` line in `logs/events.jsonl` has a `capture` path. Later frames of the same track do not add another file. `logs/` is gitignored.
 
 To check a session:
 
 1. Watch the road and the preview, or the dashboard live view.
-2. Compare the session totals with what passed. **In frame** falls when the vehicle leaves.
-3. Open a file in `logs/captures/` (also listed on the dashboard) and confirm that a counted bus is a bus.
+2. Compare the session totals with what passed. **In frame** falls when the vehicle leaves. The hourly chart is the whole local day, not only this process.
+3. Open the captures page and confirm that a counted bus is a bus.
 4. Read `logs/events.jsonl` for the `detection` and `summary` lines.
 
 Headless mode still does the count, the log, the bus JPEGs, and the dashboard:

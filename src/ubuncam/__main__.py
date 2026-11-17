@@ -14,7 +14,7 @@ import cv2
 
 from ubuncam import __version__
 from ubuncam.config import Config, ConfigError, load_config
-from ubuncam.dashboard import Dashboard, self_check_dashboard
+from ubuncam.dashboard import Dashboard, self_check_dashboard, self_check_hourly
 from ubuncam.pipeline import (
     EventLog,
     IoUTracker,
@@ -76,12 +76,14 @@ def _run_self_check() -> int:
         root = Path(tmp)
         lines = self_check_log(root)
         captures = self_check_bus_captures(root / "bus")
+        hourly = self_check_hourly(root / "hourly")
     status = self_check_dashboard()
     print(
         "self-check ok  "
         f"counts={result['counts']}  "
         f"log_lines={lines}  "
         f"bus_captures={captures['saved']}  "
+        f"hourly_today={hourly['today']}  "
         f"dashboard_bus={status['counts']['bus']}  "
         "camera=not used  model=not used"
     )

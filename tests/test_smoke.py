@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ubuncam.config import ConfigError, load_config  # noqa: E402
-from ubuncam.dashboard import self_check_dashboard  # noqa: E402
+from ubuncam.dashboard import self_check_dashboard, self_check_hourly  # noqa: E402
 from ubuncam.pipeline import self_check, self_check_bus_captures, self_check_log  # noqa: E402
 
 
@@ -78,11 +78,22 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(result["counts"], {"car": 1, "truck": 0, "bus": 2})
         self.assertTrue(result["logged_capture"])
 
+    def test_hourly_buckets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self_check_hourly(Path(tmp))
+        self.assertEqual(result["today"], 6)
+        self.assertEqual(result["at_9"], 2)
+
     def test_dashboard_counts(self):
         payload = self_check_dashboard()
         self.assertEqual(payload["counts"], {"car": 4, "truck": 1, "bus": 2})
         self.assertEqual(payload["active"], {"car": 1, "truck": 0, "bus": 1})
         self.assertEqual(payload["captures"], [])
+        self.assertEqual(len(payload["hourly"]["hours"]), 24)
+        self.assertEqual(len(payload["hourly"]["series"]["total"]), 24)
+        self.assertEqual(sum(payload["hourly"]["series"]["bus"]), 1)
+        self.assertEqual(sum(payload["hourly"]["series"]["total"]), 1)
+        self.assertEqual(sum(payload["hourly"]["series"]["car"]), 0)
 
     def test_dashboard_serves_capture_and_rejects_escape(self):
         import json
@@ -107,6 +118,14 @@ class SmokeTest(unittest.TestCase):
                 self.assertEqual(body["counts"]["bus"], 1)
                 self.assertEqual(body["active"]["bus"], 0)
                 self.assertEqual(body["captures"], [{"track_id": 7, "file": name, "url": "/captures/" + name}])
+                with urllib.request.urlopen(dashboard.url, timeout=2) as response:
+                    main_page = response.read().decode("utf-8")
+                self.assertIn('href="/captures"', main_page)
+                self.assertNotIn(name, main_page)
+                with urllib.request.urlopen(dashboard.url + "captures", timeout=2) as response:
+                    captures_page = response.read().decode("utf-8")
+                self.assertIn(name, captures_page)
+                self.assertIn('href="/"', captures_page)
                 with urllib.request.urlopen(dashboard.url + "captures/" + name, timeout=2) as response:
                     self.assertEqual(response.read(), payload_bytes)
                 import socket

@@ -30,7 +30,8 @@ Target machine this was written for: x86 Intel i7-8700, 32 GB RAM, Ubuntu 26.04.
                                 |
                                 v
                      dashboard on 127.0.0.1:8765
-                  counts, live view, bus captures
+              counts, live view, today-by-hour chart
+                     /captures  bus images
 ```
 
 A new track id is one count. The same vehicle stays one count while its box still overlaps the previous box. If it leaves the frame long enough for the track to expire, the next sighting is a new count.
@@ -62,7 +63,7 @@ python -m ubuncam
 
 Press **q** in the preview window to quit. Ctrl+C also stops the loop and writes a final summary.
 
-On this machine, open the dashboard at [http://127.0.0.1:8765/](http://127.0.0.1:8765/). It listens on `127.0.0.1` only. The page shows session totals for car, truck, and bus, how many of each are in the current frame, the same annotated frames as the preview, and the newest bus captures. Headless mode (`preview.enabled: false`) still counts, logs, saves bus images, and serves that page when `dashboard.enabled` is true.
+On this machine, open the dashboard at [http://127.0.0.1:8765/](http://127.0.0.1:8765/). It listens on `127.0.0.1` only. The page shows session totals for car, truck, and bus, how many of each are in the current frame, a chart of today's counts by local hour, and the same annotated frames as the preview. Bus images are on [http://127.0.0.1:8765/captures](http://127.0.0.1:8765/captures). Headless mode (`preview.enabled: false`) still counts, logs, saves bus images, and serves those pages when `dashboard.enabled` is true.
 
 If `libglib2.0-0t64` or `libgtk-3-0t64` is not in your apt index, install `libglib2.0-0` and `libgtk-3-0` instead. More detail, including the `video` group, is in [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -96,8 +97,9 @@ Run these from the repo root so `config.yaml` and `models/` resolve.
 
 1. Start `python -m ubuncam` where you can see the road.
 2. Watch the preview window, or open [http://127.0.0.1:8765/](http://127.0.0.1:8765/) on this machine. Session totals move when a new car, truck, or bus is counted. **In frame** is only what is visible now, so it can drop back to zero while the session total stays.
-3. When a bus is counted, one JPEG appears in `logs/captures/` and on the dashboard. Open it and confirm the box is a bus. The same bus is not saved again on later frames. A double-decker still counts as bus.
-4. Open `logs/events.jsonl`. Each new track is one `detection` line. Bus lines include a `capture` path. `summary` lines are the running totals.
+3. The chart is **today, by hour, in this machine's local time** (00–23). It plots four lines: **total** (car + truck + bus), **car**, **truck**, and **bus**. Each `detection` line in `logs/events.jsonl` whose local calendar day is today adds one to that hour. The chart reads that file, so restarting the process does not clear it, and the lines move without reloading the page. `summary` lines are not counted. Yesterday's events stay in the log and are not on today's chart.
+4. When a bus is counted, one JPEG appears in `logs/captures/`. Open **Bus captures** on the dashboard ([http://127.0.0.1:8765/captures](http://127.0.0.1:8765/captures)) and confirm the box is a bus. The same bus is not saved again on later frames. A double-decker still counts as bus.
+5. Open `logs/events.jsonl`. Each new track is one `detection` line. Bus lines include a `capture` path. `summary` lines are the running totals for the session.
 
 `logs/` is gitignored. Captures and the event log stay on this machine.
 
