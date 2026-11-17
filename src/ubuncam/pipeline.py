@@ -164,6 +164,7 @@ def annotate(
     detections: list[Detection],
     counts: dict[str, int],
     fps: float | None = None,
+    infer_fps: float | None = None,
 ) -> np.ndarray:
     vis = frame.copy()
     for det in detections:
@@ -179,8 +180,13 @@ def annotate(
         _label(vis, label, (x1, text_y), color)
 
     hud = "  ".join(f"{name}:{count}" for name, count in counts.items())
+    prefix = []
     if fps is not None:
-        hud = f"{fps:4.1f} fps   {hud}"
+        prefix.append(f"{fps:4.1f} fps")
+    if infer_fps is not None:
+        prefix.append(f"infer {infer_fps:3.1f}")
+    if prefix:
+        hud = "  ".join(prefix) + "   " + hud
     cv2.rectangle(vis, (0, 0), (vis.shape[1], 28), (0, 0, 0), -1)
     cv2.putText(vis, hud, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
     return vis
@@ -241,6 +247,54 @@ def record_frame(
     if vis is not None:
         save_bus_captures(vis, events, captures_dir)
     return tracked, events, active, vis
+
+
+class TrackSession:
+    """Tracker and counter advance only when a new inference result arrives.
+
+    ``step`` is one YOLO result. ``overlay`` draws those boxes on a later
+    camera frame and does not call the tracker. ``max_age`` counts ``step``
+    calls, so an empty update on a display frame would drop tracks early.
+    """
+
+    def __init__(self, tracker: IoUTracker, counter: VehicleCounter):
+        self.tracker = tracker
+        self.counter = counter
+        self.tracked: list[Detection] = []
+        self.active = {name: 0 for name in counter.counts}
+        self.inferences = 0
+
+    def step(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        captures_dir: Path,
+        *,
+        draw: bool = False,
+        fps: float | None = None,
+    ) -> tuple[list[dict], np.ndarray | None]:
+        tracked, events, active, vis = record_frame(
+            frame,
+            detections,
+            self.tracker,
+            self.counter,
+            captures_dir,
+            draw=draw,
+            fps=fps,
+        )
+        self.tracked = tracked
+        self.active = active
+        self.inferences += 1
+        return events, vis
+
+    def overlay(
+        self,
+        frame: np.ndarray,
+        *,
+        fps: float | None = None,
+        infer_fps: float | None = None,
+    ) -> np.ndarray:
+        return annotate(frame, self.tracked, self.counter.counts, fps=fps, infer_fps=infer_fps)
 
 
 def _label(image: np.ndarray, text: str, origin: tuple[int, int], color: tuple[int, int, int]) -> None:
@@ -311,10 +365,67 @@ def self_check() -> dict:
     # Left edge of the box sits below the HUD strip.
     assert int(vis[40, 10].sum()) > 0
 
+    gated = self_check_inference_gate()
+    assert gated["held_track"]
+    assert gated["counts"]["car"] == 2
+
     return {
         "counts": dict(counter.counts),
         "drawn": True,
         "classes": list(allowed),
+        "inference_gate": gated["inferences"],
+    }
+
+
+def self_check_inference_gate() -> dict:
+    """Display frames keep the last boxes and do not age tracks.
+
+    An empty inference result still counts as an update. ``max_age`` is 1, so
+    two empty results drop the track, while overlays in between do not.
+    """
+    tracker = IoUTracker(iou_threshold=0.3, max_age=1)
+    counter = VehicleCounter(("car", "truck", "bus"))
+    session = TrackSession(tracker, counter)
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    captures = Path("unused-captures")
+    events, vis = session.step(frame, [Detection((4, 4, 30, 30), "car", 0.9)], captures, draw=False)
+    assert vis is None
+    assert events and events[0]["class"] == "car"
+    assert counter.counts == {"car": 1, "truck": 0, "bus": 0}
+    track_id = next(iter(tracker._tracks))
+    overlays = 0
+    for _ in range(4):
+        drawn = session.overlay(frame, fps=24.0, infer_fps=5.0)
+        overlays += 1
+        assert drawn.shape == frame.shape
+        assert int(drawn[:28].sum()) > 0
+    assert session.inferences == 1
+    assert tracker._tracks[track_id].missed == 0
+    events, _vis = session.step(
+        frame,
+        [Detection((4, 4, 30, 30), "car", 0.85)],
+        captures,
+        draw=False,
+    )
+    assert events == []
+    assert counter.counts["car"] == 1
+    assert session.inferences == 2
+    session.step(frame, [], captures, draw=False)
+    session.step(frame, [], captures, draw=False)
+    assert track_id not in tracker._tracks
+    events, _vis = session.step(
+        frame,
+        [Detection((4, 4, 30, 30), "car", 0.8)],
+        captures,
+        draw=False,
+    )
+    assert counter.counts["car"] == 2
+    assert events and events[0]["track_id"] != track_id
+    return {
+        "counts": dict(counter.counts),
+        "inferences": session.inferences,
+        "overlays": overlays,
+        "held_track": True,
     }
 
 
